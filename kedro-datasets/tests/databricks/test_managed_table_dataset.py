@@ -1,14 +1,10 @@
-import importlib
-
 import pandas as pd
 import pytest
-from kedro.io.core import Version, VersionNotFoundError
+from kedro.io.core import DatasetError, Version, VersionNotFoundError
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.types import IntegerType, StringType, StructField, StructType
 
-from kedro_datasets._io import DatasetError
 from kedro_datasets.databricks import ManagedTableDataset
-from kedro_datasets.databricks.managed_table_dataset import _DEPRECATED_CLASSES
 
 
 @pytest.fixture
@@ -173,17 +169,6 @@ def expected_upsert_multiple_primary_spark_df(spark_session: SparkSession):
     return spark_session.createDataFrame(data, schema)
 
 
-@pytest.mark.parametrize(
-    "module_name",
-    ["kedro_datasets.databricks", "kedro_datasets.databricks.managed_table_dataset"],
-)
-@pytest.mark.parametrize("class_name", _DEPRECATED_CLASSES)
-def test_deprecation(module_name, class_name):
-    with pytest.warns(DeprecationWarning, match=f"{repr(class_name)} has been renamed"):
-        getattr(importlib.import_module(module_name), class_name)
-
-
-# pylint: disable=too-many-public-methods
 class TestManagedTableDataset:
     def test_full_table(self):
         unity_ds = ManagedTableDataset(catalog="test", database="test", table="test")

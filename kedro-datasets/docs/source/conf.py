@@ -43,14 +43,17 @@ version = re.match(r"^([0-9]+\.[0-9]+).*", release).group(1)
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
+    "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",
     "sphinx_autodoc_typehints",
     "sphinx.ext.doctest",
     "sphinx.ext.ifconfig",
     "sphinx.ext.viewcode",
+    "sphinxcontrib.jquery",
     "sphinx_copybutton",
     "myst_parser",
     "notfound.extension",
+    "sphinxcontrib.jquery",
 ]
 
 # enable autosummary plugin  (table of contents for modules/classes/class
@@ -88,11 +91,16 @@ exclude_patterns = [
     "kedro_docs_style_guide.md",
 ]
 
+intersphinx_mapping = {
+    "kedro": ("https://docs.kedro.org/en/stable/", None),
+    "python": ("https://docs.python.org/3.9/", None)
+}
 
 type_targets = {
     "py:class": (
-        "kedro.io.core.AbstractDataSet",
-        "kedro.io.AbstractDataSet",
+        "kedro.io.core.AbstractDataset",
+        "kedro.io.AbstractDataset",
+        "AbstractDataset",
         "kedro.io.core.Version",
         "requests.auth.AuthBase",
         "google.oauth2.credentials.Credentials",
@@ -106,7 +114,6 @@ type_targets = {
         "typing.Tuple",
     ),
     "py:exc": (
-        "DataSetError",
         "DatasetError",
     ),
 }
@@ -245,16 +252,16 @@ def autolink_replacements(what: str) -> list[tuple[str, str, str]]:
     is a reStructuredText link to their documentation.
 
     For example, if the docstring reads:
-        This LambdaDataSet loads and saves ...
+        This LambdaDataset loads and saves ...
 
-    Then the word ``LambdaDataSet``, will be replaced by
-    :class:`~kedro.io.LambdaDataSet`
+    Then the word ``LambdaDataset``, will be replaced by
+    :class:`~kedro.io.LambdaDataset`
 
     Works for plural as well, e.g:
-        These ``LambdaDataSet``s load and save
+        These ``LambdaDataset``s load and save
 
     Will convert to:
-        These :class:`kedro.io.LambdaDataSet` load and save
+        These :class:`kedro.io.LambdaDataset` load and save
 
     Args:
         what: The objects to create replacement tuples for. Possible values
@@ -370,8 +377,8 @@ def autodoc_process_docstring(app, what, name, obj, options, lines):
         print(
             style(
                 "Failed to check for class name mentions that can be "
-                "converted to reStructuredText links in docstring of {}. "
-                "Error is: \n{}".format(name, str(e)),
+                f"converted to reStructuredText links in docstring of {name}. "
+                f"Error is: \n{str(e)}",
                 fg="red",
             )
         )
@@ -430,7 +437,7 @@ except Exception as e:
         style(
             "Failed to create list of (regex, reStructuredText link "
             "replacement) for class names and method names in docstrings. "
-            "Error is: \n{}".format(str(e)),
+            f"Error is: \n{str(e)}",
             fg="red",
         )
     )

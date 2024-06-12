@@ -4,11 +4,11 @@ The ``MetricsDataset`` is part of Kedro Experiment Tracking. The dataset is vers
 and only takes metrics of numeric values.
 """
 import json
-import warnings
-from typing import Dict, NoReturn
+from typing import NoReturn
 
 from kedro.io.core import DatasetError, get_filepath_str
 
+from kedro_datasets._typing import MetricsTrackingPreview
 from kedro_datasets.json import json_dataset
 
 
@@ -31,13 +31,14 @@ class MetricsDataset(json_dataset.JSONDataset):
     Example usage for the
     `Python API <https://kedro.readthedocs.io/en/stable/data/\
     advanced_data_catalog_usage.html>`_:
-    ::
+
+    .. code-block:: pycon
 
         >>> from kedro_datasets.tracking import MetricsDataset
         >>>
-        >>> data = {'col1': 1, 'col2': 0.23, 'col3': 0.002}
+        >>> data = {"col1": 1, "col2": 0.23, "col3": 0.002}
         >>>
-        >>> dataset = MetricsDataset(filepath="test.json")
+        >>> dataset = MetricsDataset(filepath=tmp_path / "test.json")
         >>> dataset.save(data)
 
     """
@@ -47,7 +48,7 @@ class MetricsDataset(json_dataset.JSONDataset):
     def _load(self) -> NoReturn:
         raise DatasetError(f"Loading not supported for '{self.__class__.__name__}'")
 
-    def _save(self, data: Dict[str, float]) -> None:
+    def _save(self, data: dict[str, float]) -> None:
         """Converts all values in the data from a ``MetricsDataset`` to float to make sure
         they are numeric values which can be displayed in Kedro Viz and then saves the dataset.
         """
@@ -66,20 +67,9 @@ class MetricsDataset(json_dataset.JSONDataset):
 
         self._invalidate_cache()
 
+    def preview(self) -> MetricsTrackingPreview:
+        "Load the Metrics tracking dataset used in Kedro-viz experiment tracking"
+        load_path = get_filepath_str(self._get_load_path(), self._protocol)
 
-_DEPRECATED_CLASSES = {
-    "MetricsDataSet": MetricsDataset,
-}
-
-
-def __getattr__(name):
-    if name in _DEPRECATED_CLASSES:
-        alias = _DEPRECATED_CLASSES[name]
-        warnings.warn(
-            f"{repr(name)} has been renamed to {repr(alias.__name__)}, "
-            f"and the alias will be removed in Kedro-Datasets 2.0.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return alias
-    raise AttributeError(f"module {repr(__name__)} has no attribute {repr(name)}")
+        with self._fs.open(load_path, **self._fs_open_args_load) as fs_file:
+            return json.load(fs_file)

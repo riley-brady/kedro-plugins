@@ -1,22 +1,29 @@
 """``MatplotlibWriter`` saves one or more Matplotlib objects as image
 files to an underlying filesystem (e.g. local, S3, GCS)."""
 
+import base64
 import io
 from copy import deepcopy
 from pathlib import PurePosixPath
-from typing import Any, Dict, List, NoReturn, Union
+from typing import Any, NoReturn, Union
 from warnings import warn
 
 import fsspec
 import matplotlib.pyplot as plt
-from kedro.io.core import Version, get_filepath_str, get_protocol_and_path
+from kedro.io.core import (
+    AbstractVersionedDataset,
+    DatasetError,
+    Version,
+    get_filepath_str,
+    get_protocol_and_path,
+)
 
-from kedro_datasets._io import AbstractVersionedDataset, DatasetError
+from kedro_datasets._typing import ImagePreview
 
 
 class MatplotlibWriter(
     AbstractVersionedDataset[
-        Union[plt.figure, List[plt.figure], Dict[str, plt.figure]], NoReturn
+        Union[plt.figure, list[plt.figure], dict[str, plt.figure]], NoReturn
     ]
 ):
     """``MatplotlibWriter`` saves one or more Matplotlib objects as
@@ -37,36 +44,38 @@ class MatplotlibWriter(
     Example usage for the
     `Python API <https://kedro.readthedocs.io/en/stable/data/\
     advanced_data_catalog_usage.html>`_:
-    ::
+
+    .. code-block:: pycon
 
         >>> import matplotlib.pyplot as plt
         >>> from kedro_datasets.matplotlib import MatplotlibWriter
         >>>
         >>> fig = plt.figure()
-        >>> plt.plot([1, 2, 3])
-        >>> plot_writer = MatplotlibWriter(
-        ...     filepath="data/08_reporting/output_plot.png"
-        ... )
+        >>> plt.plot([1, 2, 3])  # doctest: +ELLIPSIS
+        [<matplotlib.lines.Line2D object at 0x...>]
+        >>> plot_writer = MatplotlibWriter(filepath=tmp_path / "data/08_reporting/output_plot.png")
         >>> plt.close()
         >>> plot_writer.save(fig)
 
     Example saving a plot as a PDF file:
-    ::
+
+    .. code-block:: pycon
 
         >>> import matplotlib.pyplot as plt
         >>> from kedro_datasets.matplotlib import MatplotlibWriter
         >>>
         >>> fig = plt.figure()
-        >>> plt.plot([1, 2, 3])
+        >>> plt.plot([1, 2, 3])  # doctest: +ELLIPSIS
+        [<matplotlib.lines.Line2D object at 0x...>]
         >>> pdf_plot_writer = MatplotlibWriter(
-        ...     filepath="data/08_reporting/output_plot.pdf",
-        ...     save_args={"format": "pdf"},
+        ...     filepath=tmp_path / "data/08_reporting/output_plot.pdf", save_args={"format": "pdf"}
         ... )
         >>> plt.close()
         >>> pdf_plot_writer.save(fig)
 
     Example saving multiple plots in a folder, using a dictionary:
-    ::
+
+    .. code-block:: pycon
 
         >>> import matplotlib.pyplot as plt
         >>> from kedro_datasets.matplotlib import MatplotlibWriter
@@ -76,43 +85,48 @@ class MatplotlibWriter(
         ...     plots_dict[f"{colour}.png"] = plt.figure()
         ...     plt.plot([1, 2, 3], color=colour)
         ...
+        [<matplotlib.lines.Line2D object at 0x...>]
+        [<matplotlib.lines.Line2D object at 0x...>]
+        [<matplotlib.lines.Line2D object at 0x...>]
         >>> plt.close("all")
-        >>> dict_plot_writer = MatplotlibWriter(
-        ...     filepath="data/08_reporting/plots"
-        ... )
+        >>> dict_plot_writer = MatplotlibWriter(filepath=tmp_path / "data/08_reporting/plots")
         >>> dict_plot_writer.save(plots_dict)
 
     Example saving multiple plots in a folder, using a list:
-    ::
+
+    .. code-block:: pycon
 
         >>> import matplotlib.pyplot as plt
         >>> from kedro_datasets.matplotlib import MatplotlibWriter
         >>>
         >>> plots_list = []
-        >>> for i in range(5):
+        >>> for i in range(5):  # doctest: +ELLIPSIS
         ...     plots_list.append(plt.figure())
         ...     plt.plot([i, i + 1, i + 2])
         ...
+        [<matplotlib.lines.Line2D object at 0x...>]
+        [<matplotlib.lines.Line2D object at 0x...>]
+        [<matplotlib.lines.Line2D object at 0x...>]
+        [<matplotlib.lines.Line2D object at 0x...>]
+        [<matplotlib.lines.Line2D object at 0x...>]
         >>> plt.close("all")
-        >>> list_plot_writer = MatplotlibWriter(
-        ...     filepath="data/08_reporting/plots"
-        ... )
+        >>> list_plot_writer = MatplotlibWriter(filepath=tmp_path / "data/08_reporting/plots")
         >>> list_plot_writer.save(plots_list)
 
     """
 
-    DEFAULT_SAVE_ARGS: Dict[str, Any] = {}
+    DEFAULT_SAVE_ARGS: dict[str, Any] = {}
 
-    # pylint: disable=too-many-arguments
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
+        *,
         filepath: str,
-        fs_args: Dict[str, Any] = None,
-        credentials: Dict[str, Any] = None,
-        save_args: Dict[str, Any] = None,
+        fs_args: dict[str, Any] = None,
+        credentials: dict[str, Any] = None,
+        save_args: dict[str, Any] = None,
         version: Version = None,
         overwrite: bool = False,
-        metadata: Dict[str, Any] = None,
+        metadata: dict[str, Any] = None,
     ) -> None:
         """Creates a new instance of ``MatplotlibWriter``.
 
@@ -178,7 +192,7 @@ class MatplotlibWriter(
             overwrite = False
         self._overwrite = overwrite
 
-    def _describe(self) -> Dict[str, Any]:
+    def _describe(self) -> dict[str, Any]:
         return {
             "filepath": self._filepath,
             "protocol": self._protocol,
@@ -190,7 +204,7 @@ class MatplotlibWriter(
         raise DatasetError(f"Loading not supported for '{self.__class__.__name__}'")
 
     def _save(
-        self, data: Union[plt.figure, List[plt.figure], Dict[str, plt.figure]]
+        self, data: Union[plt.figure, list[plt.figure], dict[str, plt.figure]]
     ) -> None:
         save_path = self._get_save_path()
 
@@ -234,3 +248,15 @@ class MatplotlibWriter(
         """Invalidate underlying filesystem caches."""
         filepath = get_filepath_str(self._filepath, self._protocol)
         self._fs.invalidate_cache(filepath)
+
+    def preview(self) -> ImagePreview:
+        """
+        Generates a preview of the matplotlib dataset as a base64 encoded image.
+
+        Returns:
+            str: A base64 encoded string representing the matplotlib plot image.
+        """
+        load_path = get_filepath_str(self._get_load_path(), self._protocol)
+        with self._fs.open(load_path, mode="rb") as img_file:
+            base64_bytes = base64.b64encode(img_file.read())
+        return base64_bytes.decode("utf-8")

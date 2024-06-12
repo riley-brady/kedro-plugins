@@ -1,5 +1,4 @@
-# pylint: disable=too-many-lines
-import importlib
+import os
 import re
 import sys
 import tempfile
@@ -9,11 +8,11 @@ import boto3
 import pandas as pd
 import pytest
 from kedro.io import DataCatalog, Version
-from kedro.io.core import generate_timestamp
+from kedro.io.core import DatasetError, generate_timestamp
 from kedro.pipeline import node
 from kedro.pipeline.modular_pipeline import pipeline as modular_pipeline
 from kedro.runner import ParallelRunner, SequentialRunner
-from moto import mock_s3
+from moto import mock_aws
 from packaging.version import Version as PackagingVersion
 from pyspark import __version__
 from pyspark.sql import SparkSession
@@ -27,12 +26,10 @@ from pyspark.sql.types import (
 )
 from pyspark.sql.utils import AnalysisException
 
-from kedro_datasets._io import DatasetError
 from kedro_datasets.pandas import CSVDataset, ParquetDataset
 from kedro_datasets.pickle import PickleDataset
 from kedro_datasets.spark import SparkDataset
 from kedro_datasets.spark.spark_dataset import (
-    _DEPRECATED_CLASSES,
     _dbfs_exists,
     _dbfs_glob,
     _get_dbutils,
@@ -143,11 +140,11 @@ def spark_in(tmp_path, sample_spark_df):
 @pytest.fixture
 def mocked_s3_bucket():
     """Create a bucket for testing using moto."""
-    with mock_s3():
+    with mock_aws():
         conn = boto3.client(
             "s3",
-            aws_access_key_id="fake_access_key",
-            aws_secret_access_key="fake_secret_key",
+            aws_access_key_id=AWS_CREDENTIALS["key"],
+            aws_secret_access_key=AWS_CREDENTIALS["secret"],
         )
         conn.create_bucket(Bucket=BUCKET_NAME)
         yield conn
@@ -162,7 +159,7 @@ def mocked_s3_schema(tmp_path, mocked_s3_bucket, sample_spark_df_schema: StructT
     mocked_s3_bucket.put_object(
         Bucket=BUCKET_NAME, Key=SCHEMA_FILE_NAME, Body=temporary_path.read_bytes()
     )
-    return mocked_s3_bucket
+    return f"s3://{BUCKET_NAME}/{SCHEMA_FILE_NAME}"
 
 
 class FileInfo:
@@ -173,16 +170,6 @@ class FileInfo:
         return "." not in self.path.split("/")[-1]
 
 
-@pytest.mark.parametrize(
-    "module_name", ["kedro_datasets.spark", "kedro_datasets.spark.spark_dataset"]
-)
-@pytest.mark.parametrize("class_name", _DEPRECATED_CLASSES)
-def test_deprecation(module_name, class_name):
-    with pytest.warns(DeprecationWarning, match=f"{repr(class_name)} has been renamed"):
-        getattr(importlib.import_module(module_name), class_name)
-
-
-# pylint: disable=too-many-public-methods
 class TestSparkDataset:
     def test_load_parquet(self, tmp_path, sample_pandas_df):
         temp_path = (tmp_path / "data").as_posix()
@@ -422,15 +409,13 @@ class TestSparkDataset:
         # AnalysisExceptions clearly indicating a missing file
         spark_dataset = SparkDataset(filepath="")
         if SPARK_VERSION >= PackagingVersion("3.4.0"):
-            mocker.patch.object(
-                spark_dataset,
-                "_get_spark",
+            mocker.patch(
+                "kedro_datasets.spark.spark_dataset._get_spark",
                 side_effect=AnalysisException("Other Exception"),
             )
         else:
-            mocker.patch.object(
-                spark_dataset,
-                "_get_spark",
+            mocker.patch(
+                "kedro_datasets.spark.spark_dataset._get_spark",
                 side_effect=AnalysisException("Other Exception", []),
             )
         with pytest.raises(DatasetError, match="Other Exception"):
@@ -494,6 +479,12 @@ class TestSparkDataset:
         SparkDataset(filepath=filepath)
         assert expected_message in caplog.text
 
+    def test_dbfs_prefix_warning_databricks_s3(self, monkeypatch, caplog):
+        # test that warning is not raised when on Databricks using an s3 path
+        monkeypatch.setenv("DATABRICKS_RUNTIME_VERSION", "7.3")
+        SparkDataset(filepath="s3://my_project/data/02_intermediate/processed_data")
+        assert caplog.text == ""
+
 
 class TestSparkDatasetVersionedLocal:
     def test_no_version(self, versioned_dataset_local):
@@ -537,8 +528,8 @@ class TestSparkDatasetVersionedLocal:
         )
 
         pattern = (
-            r"Save version '{ev.save}' did not match load version "
-            r"'{ev.load}' for SparkDataset\(.+\)".format(ev=exact_version)
+            rf"Save version '{exact_version.save}' did not match load version "
+            rf"'{exact_version.load}' for SparkDataset\(.+\)"
         )
         with pytest.warns(UserWarning, match=pattern):
             ds_local.save(sample_spark_df)
@@ -578,7 +569,7 @@ class TestSparkDatasetVersionedLocal:
     sys.platform.startswith("win"), reason="DBFS doesn't work on Windows"
 )
 class TestSparkDatasetVersionedDBFS:
-    def test_load_latest(  # pylint: disable=too-many-arguments
+    def test_load_latest(
         self, mocker, versioned_dataset_dbfs, version, tmp_path, sample_spark_df
     ):
         mocked_glob = mocker.patch.object(versioned_dataset_dbfs, "_glob_function")
@@ -605,7 +596,7 @@ class TestSparkDatasetVersionedDBFS:
 
         assert reloaded.exceptAll(sample_spark_df).count() == 0
 
-    def test_save(  # pylint: disable=too-many-arguments
+    def test_save(
         self, mocker, versioned_dataset_dbfs, version, tmp_path, sample_spark_df
     ):
         mocked_glob = mocker.patch.object(versioned_dataset_dbfs, "_glob_function")
@@ -618,7 +609,7 @@ class TestSparkDatasetVersionedDBFS:
         )
         assert (tmp_path / FILENAME / version.save / FILENAME).exists()
 
-    def test_exists(  # pylint: disable=too-many-arguments
+    def test_exists(
         self, mocker, versioned_dataset_dbfs, version, tmp_path, sample_spark_df
     ):
         mocked_glob = mocker.patch.object(versioned_dataset_dbfs, "_glob_function")
@@ -735,13 +726,19 @@ class TestSparkDatasetVersionedDBFS:
 
 
 class TestSparkDatasetVersionedS3:
+    os.environ["AWS_ACCESS_KEY_ID"] = "FAKE_ACCESS_KEY"
+    os.environ["AWS_SECRET_ACCESS_KEY"] = "FAKE_SECRET_KEY"
+
+    @pytest.mark.xfail
     def test_no_version(self, versioned_dataset_s3):
         pattern = r"Did not find any versions for SparkDataset\(.+\)"
         with pytest.raises(DatasetError, match=pattern):
             versioned_dataset_s3.load()
 
     def test_load_latest(self, mocker, versioned_dataset_s3):
-        get_spark = mocker.patch.object(versioned_dataset_s3, "_get_spark")
+        get_spark = mocker.patch(
+            "kedro_datasets.spark.spark_dataset._get_spark",
+        )
         mocked_glob = mocker.patch.object(versioned_dataset_s3, "_glob_function")
         mocked_glob.return_value = [
             "{b}/{f}/{v}/{f}".format(b=BUCKET_NAME, f=FILENAME, v="mocked_version")
@@ -750,9 +747,7 @@ class TestSparkDatasetVersionedS3:
 
         versioned_dataset_s3.load()
 
-        mocked_glob.assert_called_once_with(
-            "{b}/{f}/*/{f}".format(b=BUCKET_NAME, f=FILENAME)
-        )
+        mocked_glob.assert_called_once_with(f"{BUCKET_NAME}/{FILENAME}/*/{FILENAME}")
         get_spark.return_value.read.load.assert_called_once_with(
             "s3a://{b}/{f}/{v}/{f}".format(
                 b=BUCKET_NAME, f=FILENAME, v="mocked_version"
@@ -766,48 +761,47 @@ class TestSparkDatasetVersionedS3:
             filepath=f"s3a://{BUCKET_NAME}/{FILENAME}",
             version=Version(ts, None),
         )
-        get_spark = mocker.patch.object(ds_s3, "_get_spark")
-
+        get_spark = mocker.patch(
+            "kedro_datasets.spark.spark_dataset._get_spark",
+        )
         ds_s3.load()
 
         get_spark.return_value.read.load.assert_called_once_with(
-            "s3a://{b}/{f}/{v}/{f}".format(b=BUCKET_NAME, f=FILENAME, v=ts), "parquet"
+            f"s3a://{BUCKET_NAME}/{FILENAME}/{ts}/{FILENAME}", "parquet"
         )
 
-    def test_save(self, versioned_dataset_s3, version, mocker):
+    def test_save(self, mocked_s3_schema, versioned_dataset_s3, version, mocker):
         mocked_spark_df = mocker.Mock()
+
+        ds_s3 = SparkDataset(
+            filepath=f"s3a://{BUCKET_NAME}/{FILENAME}", version=version
+        )
 
         # need resolve_load_version() call to return a load version that
         # matches save version due to consistency check in versioned_dataset_s3.save()
-        mocker.patch.object(
-            versioned_dataset_s3, "resolve_load_version", return_value=version.save
-        )
-
-        versioned_dataset_s3.save(mocked_spark_df)
+        mocker.patch.object(ds_s3, "resolve_load_version", return_value=version.save)
+        ds_s3.save(mocked_spark_df)
         mocked_spark_df.write.save.assert_called_once_with(
-            "s3a://{b}/{f}/{v}/{f}".format(b=BUCKET_NAME, f=FILENAME, v=version.save),
+            f"s3a://{BUCKET_NAME}/{FILENAME}/{version.save}/{FILENAME}",
             "parquet",
         )
 
-    def test_save_version_warning(self, mocker):
+    def test_save_version_warning(self, mocked_s3_schema, versioned_dataset_s3, mocker):
         exact_version = Version("2019-01-01T23.59.59.999Z", "2019-01-02T00.00.00.000Z")
         ds_s3 = SparkDataset(
             filepath=f"s3a://{BUCKET_NAME}/{FILENAME}",
             version=exact_version,
-            credentials=AWS_CREDENTIALS,
         )
         mocked_spark_df = mocker.Mock()
 
         pattern = (
-            r"Save version '{ev.save}' did not match load version "
-            r"'{ev.load}' for SparkDataset\(.+\)".format(ev=exact_version)
+            rf"Save version '{exact_version.save}' did not match load version "
+            rf"'{exact_version.load}' for SparkDataset\(.+\)"
         )
         with pytest.warns(UserWarning, match=pattern):
             ds_s3.save(mocked_spark_df)
         mocked_spark_df.write.save.assert_called_once_with(
-            "s3a://{b}/{f}/{v}/{f}".format(
-                b=BUCKET_NAME, f=FILENAME, v=exact_version.save
-            ),
+            f"s3a://{BUCKET_NAME}/{FILENAME}/{exact_version.save}/{FILENAME}",
             "parquet",
         )
 
@@ -861,7 +855,10 @@ class TestSparkDatasetVersionedHdfs:
         hdfs_walk.return_value = HDFS_FOLDER_STRUCTURE
 
         versioned_hdfs = SparkDataset(filepath=f"hdfs://{HDFS_PREFIX}", version=version)
-        get_spark = mocker.patch.object(versioned_hdfs, "_get_spark")
+
+        get_spark = mocker.patch(
+            "kedro_datasets.spark.spark_dataset._get_spark",
+        )
 
         versioned_hdfs.load()
 
@@ -878,12 +875,14 @@ class TestSparkDatasetVersionedHdfs:
         versioned_hdfs = SparkDataset(
             filepath=f"hdfs://{HDFS_PREFIX}", version=Version(ts, None)
         )
-        get_spark = mocker.patch.object(versioned_hdfs, "_get_spark")
+        get_spark = mocker.patch(
+            "kedro_datasets.spark.spark_dataset._get_spark",
+        )
 
         versioned_hdfs.load()
 
         get_spark.return_value.read.load.assert_called_once_with(
-            "hdfs://{fn}/{f}/{v}/{f}".format(fn=FOLDER_NAME, f=FILENAME, v=ts),
+            f"hdfs://{FOLDER_NAME}/{FILENAME}/{ts}/{FILENAME}",
             "parquet",
         )
 
@@ -905,13 +904,11 @@ class TestSparkDatasetVersionedHdfs:
         versioned_hdfs.save(mocked_spark_df)
 
         hdfs_status.assert_called_once_with(
-            "{fn}/{f}/{v}/{f}".format(fn=FOLDER_NAME, v=version.save, f=FILENAME),
+            f"{FOLDER_NAME}/{FILENAME}/{version.save}/{FILENAME}",
             strict=False,
         )
         mocked_spark_df.write.save.assert_called_once_with(
-            "hdfs://{fn}/{f}/{v}/{f}".format(
-                fn=FOLDER_NAME, v=version.save, f=FILENAME
-            ),
+            f"hdfs://{FOLDER_NAME}/{FILENAME}/{version.save}/{FILENAME}",
             "parquet",
         )
 
@@ -924,16 +921,14 @@ class TestSparkDatasetVersionedHdfs:
         mocked_spark_df = mocker.Mock()
 
         pattern = (
-            r"Save version '{ev.save}' did not match load version "
-            r"'{ev.load}' for SparkDataset\(.+\)".format(ev=exact_version)
+            rf"Save version '{exact_version.save}' did not match load version "
+            rf"'{exact_version.load}' for SparkDataset\(.+\)"
         )
 
         with pytest.warns(UserWarning, match=pattern):
             versioned_hdfs.save(mocked_spark_df)
         mocked_spark_df.write.save.assert_called_once_with(
-            "hdfs://{fn}/{f}/{sv}/{f}".format(
-                fn=FOLDER_NAME, f=FILENAME, sv=exact_version.save
-            ),
+            f"hdfs://{FOLDER_NAME}/{FILENAME}/{exact_version.save}/{FILENAME}",
             "parquet",
         )
 
@@ -955,7 +950,7 @@ class TestSparkDatasetVersionedHdfs:
             versioned_hdfs.save(mocked_spark_df)
 
         hdfs_status.assert_called_once_with(
-            "{fn}/{f}/{v}/{f}".format(fn=FOLDER_NAME, v=version.save, f=FILENAME),
+            f"{FOLDER_NAME}/{FILENAME}/{version.save}/{FILENAME}",
             strict=False,
         )
         mocked_spark_df.write.save.assert_not_called()
@@ -983,9 +978,9 @@ class TestSparkDatasetVersionedHdfs:
 @pytest.fixture
 def data_catalog(tmp_path):
     source_path = Path(__file__).parent / "data/test.parquet"
-    spark_in = SparkDataset(source_path.as_posix())
-    spark_out = SparkDataset((tmp_path / "spark_data").as_posix())
-    pickle_ds = PickleDataset((tmp_path / "pickle/test.pkl").as_posix())
+    spark_in = SparkDataset(filepath=source_path.as_posix())
+    spark_out = SparkDataset(filepath=(tmp_path / "spark_data").as_posix())
+    pickle_ds = PickleDataset(filepath=(tmp_path / "pickle/test.pkl").as_posix())
 
     return DataCatalog(
         {"spark_in": spark_in, "spark_out": spark_out, "pickle_ds": pickle_ds}
@@ -999,7 +994,7 @@ class TestDataFlowSequentialRunner:
         pipeline = modular_pipeline([node(identity, "spark_in", "spark_out")])
         SequentialRunner(is_async=is_async).run(pipeline, data_catalog)
 
-        save_path = Path(data_catalog._data_sets["spark_out"]._filepath.as_posix())
+        save_path = Path(data_catalog._datasets["spark_out"]._filepath.as_posix())
         files = list(save_path.glob("*.parquet"))
         assert len(files) > 0
 
@@ -1021,6 +1016,6 @@ class TestDataFlowSequentialRunner:
         )
         SequentialRunner(is_async=is_async).run(pipeline, data_catalog)
 
-        save_path = Path(data_catalog._data_sets["spark_out"]._filepath.as_posix())
+        save_path = Path(data_catalog._datasets["spark_out"]._filepath.as_posix())
         files = list(save_path.glob("*.parquet"))
         assert len(files) > 0

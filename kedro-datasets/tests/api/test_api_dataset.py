@@ -1,17 +1,14 @@
-# pylint: disable=no-member
 import base64
-import importlib
 import json
 import socket
 from typing import Any
 
 import pytest
 import requests
+from kedro.io.core import DatasetError
 from requests.auth import HTTPBasicAuth
 
-from kedro_datasets._io import DatasetError
 from kedro_datasets.api import APIDataset
-from kedro_datasets.api.api_dataset import _DEPRECATED_CLASSES
 
 POSSIBLE_METHODS = ["GET", "OPTIONS", "HEAD", "POST", "PUT", "PATCH", "DELETE"]
 SAVE_METHODS = ["POST", "PUT"]
@@ -27,15 +24,6 @@ TEST_METHOD = "GET"
 TEST_HEADERS = {"key": "value"}
 
 TEST_SAVE_DATA = [{"key1": "info1", "key2": "info2"}]
-
-
-@pytest.mark.parametrize(
-    "module_name", ["kedro_datasets.api", "kedro_datasets.api.api_dataset"]
-)
-@pytest.mark.parametrize("class_name", _DEPRECATED_CLASSES)
-def test_deprecation(module_name, class_name):
-    with pytest.warns(DeprecationWarning, match=f"{repr(class_name)} has been renamed"):
-        getattr(importlib.import_module(module_name), class_name)
 
 
 class TestAPIDataset:
@@ -296,9 +284,7 @@ class TestAPIDataset:
         Then check that the response is OK and the sent data is in the correct form.
         """
 
-        def json_callback(
-            request: requests.Request, context: Any  # pylint: disable=unused-argument
-        ) -> dict:
+        def json_callback(request: requests.Request, context: Any) -> dict:
             """Callback that sends back the json."""
             return request.json()
 
@@ -342,9 +328,7 @@ class TestAPIDataset:
         Then check we get a response
         """
 
-        def json_callback(
-            request: requests.Request, context: Any  # pylint: disable=unused-argument
-        ) -> dict:
+        def json_callback(request: requests.Request, context: Any) -> dict:
             """Callback that sends back the json."""
             return request.json()
 

@@ -1,5 +1,13 @@
-# Upcoming release
+# Upcoming release 0.3.2
+* Updated plugin to share if a project is being run in a ci environment.
+
+# Release 0.3.1
+* Fixed double execution of `after_catalog_created` hook by moving the logic of determining and sending of project statistics from `after_context_created` to the `after_catalog_created` hook.
+* Updated the plugin to also share the tools selected during project creation with Heap.
+
+# Release 0.3.0
 * Added support for Python 3.11
+* Removed support for Python 3.7
 
 # Release 0.2.5
 * Migrate all project metadata to static `pyproject.toml`.

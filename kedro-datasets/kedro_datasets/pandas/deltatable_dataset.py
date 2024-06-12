@@ -2,19 +2,17 @@
 S3, GCS), Databricks unity catalog and AWS Glue catalog respectively. It handles
 load and save using a pandas dataframe.
 """
-import warnings
 from copy import deepcopy
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import pandas as pd
 from deltalake import DataCatalog, DeltaTable, Metadata
 from deltalake.exceptions import TableNotFoundError
 from deltalake.writer import write_deltalake
+from kedro.io.core import AbstractDataset, DatasetError
 
-from kedro_datasets._io import AbstractDataset, DatasetError
 
-
-class DeltaTableDataset(AbstractDataset):  # pylint:disable=too-many-instance-attributes
+class DeltaTableDataset(AbstractDataset):
     """``DeltaTableDataset`` loads/saves delta tables from/to a filesystem (e.g.: local,
     S3, GCS), Databricks unity catalog and AWS Glue catalog respectively. It handles
     load and save using a pandas dataframe. When saving data, you can specify one of two
@@ -60,41 +58,43 @@ class DeltaTableDataset(AbstractDataset):  # pylint:disable=too-many-instance-at
     Example usage for the
     `Python API <https://kedro.readthedocs.io/en/stable/data/\
     advanced_data_catalog_usage.html>`_:
-    ::
+
+    .. code-block:: pycon
 
         >>> from kedro_datasets.pandas import DeltaTableDataset
         >>> import pandas as pd
         >>>
-        >>> data = pd.DataFrame({'col1': [1, 2], 'col2': [4, 5], 'col3': [5, 6]})
-        >>> dataset = DeltaTableDataset(filepath="test")
+        >>> data = pd.DataFrame({"col1": [1, 2], "col2": [4, 5], "col3": [5, 6]})
+        >>> dataset = DeltaTableDataset(filepath=tmp_path / "test")
         >>>
         >>> dataset.save(data)
         >>> reloaded = dataset.load()
         >>> assert data.equals(reloaded)
         >>>
-        >>> new_data = pd.DataFrame({'col1': [7, 8], 'col2': [9, 10], 'col3': [11, 12]})
+        >>> new_data = pd.DataFrame({"col1": [7, 8], "col2": [9, 10], "col3": [11, 12]})
         >>> dataset.save(new_data)
-        >>> dataset.get_loaded_version()
+        >>> assert isinstance(dataset.get_loaded_version(), int)
 
     """
 
     DEFAULT_WRITE_MODE = "overwrite"
     ACCEPTED_WRITE_MODES = ("overwrite", "append")
 
-    DEFAULT_LOAD_ARGS: Dict[str, Any] = {}
-    DEFAULT_SAVE_ARGS: Dict[str, Any] = {"mode": DEFAULT_WRITE_MODE}
+    DEFAULT_LOAD_ARGS: dict[str, Any] = {}
+    DEFAULT_SAVE_ARGS: dict[str, Any] = {"mode": DEFAULT_WRITE_MODE}
 
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(  # noqa: PLR0913
         self,
+        *,
         filepath: Optional[str] = None,
         catalog_type: Optional[DataCatalog] = None,
         catalog_name: Optional[str] = None,
         database: Optional[str] = None,
         table: Optional[str] = None,
-        load_args: Optional[Dict[str, Any]] = None,
-        save_args: Optional[Dict[str, Any]] = None,
-        credentials: Optional[Dict[str, Any]] = None,
-        fs_args: Optional[Dict[str, Any]] = None,
+        load_args: Optional[dict[str, Any]] = None,
+        save_args: Optional[dict[str, Any]] = None,
+        credentials: Optional[dict[str, Any]] = None,
+        fs_args: Optional[dict[str, Any]] = None,
     ) -> None:
         """Creates a new instance of ``DeltaTableDataset``
 
@@ -185,14 +185,14 @@ class DeltaTableDataset(AbstractDataset):  # pylint:disable=too-many-instance-at
             )
 
     @property
-    def fs_args(self) -> Dict[str, Any]:
+    def fs_args(self) -> dict[str, Any]:
         """Appends and returns filesystem credentials to fs_args."""
         fs_args = deepcopy(self._fs_args)
         fs_args.update(self._credentials)
         return fs_args
 
     @property
-    def schema(self) -> Dict[str, Any]:
+    def schema(self) -> dict[str, Any]:
         """Returns the schema of the DeltaTableDataset as a dictionary."""
         return self._delta_table.schema().json()
 
@@ -213,7 +213,7 @@ class DeltaTableDataset(AbstractDataset):  # pylint:disable=too-many-instance-at
         return self._delta_table.metadata()
 
     @property
-    def history(self) -> List[Dict[str, Any]]:
+    def history(self) -> list[dict[str, Any]]:
         """Returns the history of actions on DeltaTableDataset as a list of dictionaries."""
         return self._delta_table.history()
 
@@ -247,7 +247,7 @@ class DeltaTableDataset(AbstractDataset):  # pylint:disable=too-many-instance-at
                 **self._save_args,
             )
 
-    def _describe(self) -> Dict[str, Any]:
+    def _describe(self) -> dict[str, Any]:
         return {
             "filepath": self._filepath,
             "catalog_type": self._catalog_type,
@@ -258,21 +258,3 @@ class DeltaTableDataset(AbstractDataset):  # pylint:disable=too-many-instance-at
             "save_args": self._save_args,
             "version": self._version,
         }
-
-
-_DEPRECATED_CLASSES = {
-    "DeltaTableDataSet": DeltaTableDataset,
-}
-
-
-def __getattr__(name):
-    if name in _DEPRECATED_CLASSES:
-        alias = _DEPRECATED_CLASSES[name]
-        warnings.warn(
-            f"{repr(name)} has been renamed to {repr(alias.__name__)}, "
-            f"and the alias will be removed in Kedro-Datasets 2.0.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return alias
-    raise AttributeError(f"module {repr(__name__)} has no attribute {repr(name)}")

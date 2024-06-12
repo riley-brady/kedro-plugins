@@ -2,30 +2,31 @@
 filesystem (e.g.: local, S3, GCS). It uses pandas to handle the Excel file.
 """
 import logging
-import warnings
 from copy import deepcopy
 from io import BytesIO
 from pathlib import PurePosixPath
-from typing import Any, Dict, Union
+from typing import Any, Union
 
 import fsspec
 import pandas as pd
 from kedro.io.core import (
     PROTOCOL_DELIMITER,
+    AbstractVersionedDataset,
+    DatasetError,
     Version,
     get_filepath_str,
     get_protocol_and_path,
 )
 
-from kedro_datasets._io import AbstractVersionedDataset, DatasetError
+from kedro_datasets._typing import TablePreview
 
 logger = logging.getLogger(__name__)
 
 
 class ExcelDataset(
     AbstractVersionedDataset[
-        Union[pd.DataFrame, Dict[str, pd.DataFrame]],
-        Union[pd.DataFrame, Dict[str, pd.DataFrame]],
+        Union[pd.DataFrame, dict[str, pd.DataFrame]],
+        Union[pd.DataFrame, dict[str, pd.DataFrame]],
     ]
 ):
     """``ExcelDataset`` loads/saves data from/to a Excel file using an underlying
@@ -55,15 +56,15 @@ class ExcelDataset(
     Example usage for the
     `Python API <https://kedro.readthedocs.io/en/stable/data/\
     advanced_data_catalog_usage.html>`_:
-    ::
+
+    .. code-block:: pycon
 
         >>> from kedro_datasets.pandas import ExcelDataset
         >>> import pandas as pd
         >>>
-        >>> data = pd.DataFrame({'col1': [1, 2], 'col2': [4, 5],
-        ...                      'col3': [5, 6]})
+        >>> data = pd.DataFrame({"col1": [1, 2], "col2": [4, 5], "col3": [5, 6]})
         >>>
-        >>> dataset = ExcelDataset(filepath="test.xlsx")
+        >>> dataset = ExcelDataset(filepath=tmp_path / "test.xlsx")
         >>> dataset.save(data)
         >>> reloaded = dataset.load()
         >>> assert data.equals(reloaded)
@@ -89,16 +90,16 @@ class ExcelDataset(
     `Python API <https://kedro.readthedocs.io/en/stable/data/\
     advanced_data_catalog_usage.html>`_
     for a multi-sheet Excel file:
-    ::
+
+    .. code-block:: pycon
 
         >>> from kedro_datasets.pandas import ExcelDataset
         >>> import pandas as pd
         >>>
-        >>> dataframe = pd.DataFrame({'col1': [1, 2], 'col2': [4, 5],
-        ...                      'col3': [5, 6]})
+        >>> dataframe = pd.DataFrame({"col1": [1, 2], "col2": [4, 5], "col3": [5, 6]})
         >>> another_dataframe = pd.DataFrame({"x": [10, 20], "y": ["hello", "world"]})
         >>> multiframe = {"Sheet1": dataframe, "Sheet2": another_dataframe}
-        >>> dataset = ExcelDataset(filepath="test.xlsx", load_args = {"sheet_name": None})
+        >>> dataset = ExcelDataset(filepath="test.xlsx", load_args={"sheet_name": None})
         >>> dataset.save(multiframe)
         >>> reloaded = dataset.load()
         >>> assert multiframe["Sheet1"].equals(reloaded["Sheet1"])
@@ -109,17 +110,17 @@ class ExcelDataset(
     DEFAULT_LOAD_ARGS = {"engine": "openpyxl"}
     DEFAULT_SAVE_ARGS = {"index": False}
 
-    # pylint: disable=too-many-arguments
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
+        *,
         filepath: str,
         engine: str = "openpyxl",
-        load_args: Dict[str, Any] = None,
-        save_args: Dict[str, Any] = None,
+        load_args: dict[str, Any] = None,
+        save_args: dict[str, Any] = None,
         version: Version = None,
-        credentials: Dict[str, Any] = None,
-        fs_args: Dict[str, Any] = None,
-        metadata: Dict[str, Any] = None,
+        credentials: dict[str, Any] = None,
+        fs_args: dict[str, Any] = None,
+        metadata: dict[str, Any] = None,
     ) -> None:
         """Creates a new instance of ``ExcelDataset`` pointing to a concrete Excel file
         on a specific filesystem.
@@ -204,7 +205,7 @@ class ExcelDataset(
             self._save_args.pop("storage_options", None)
             self._load_args.pop("storage_options", None)
 
-    def _describe(self) -> Dict[str, Any]:
+    def _describe(self) -> dict[str, Any]:
         return {
             "filepath": self._filepath,
             "protocol": self._protocol,
@@ -214,7 +215,7 @@ class ExcelDataset(
             "version": self._version,
         }
 
-    def _load(self) -> Union[pd.DataFrame, Dict[str, pd.DataFrame]]:
+    def _load(self) -> Union[pd.DataFrame, dict[str, pd.DataFrame]]:
         load_path = str(self._get_load_path())
         if self._protocol == "file":
             # file:// protocol seems to misbehave on Windows
@@ -228,11 +229,10 @@ class ExcelDataset(
             load_path, storage_options=self._storage_options, **self._load_args
         )
 
-    def _save(self, data: Union[pd.DataFrame, Dict[str, pd.DataFrame]]) -> None:
+    def _save(self, data: Union[pd.DataFrame, dict[str, pd.DataFrame]]) -> None:
         output = BytesIO()
         save_path = get_filepath_str(self._get_save_path(), self._protocol)
 
-        # pylint: disable=abstract-class-instantiated
         with pd.ExcelWriter(output, **self._writer_args) as writer:
             if isinstance(data, dict):
                 for sheet_name, sheet_data in data.items():
@@ -264,28 +264,19 @@ class ExcelDataset(
         filepath = get_filepath_str(self._filepath, self._protocol)
         self._fs.invalidate_cache(filepath)
 
-    def _preview(self, nrows: int = 40) -> Dict:
+    def preview(self, nrows: int = 5) -> TablePreview:
+        """
+        Generate a preview of the dataset with a specified number of rows.
+
+        Args:
+            nrows: The number of rows to include in the preview. Defaults to 5.
+
+        Returns:
+            dict: A dictionary containing the data in a split format.
+        """
         # Create a copy so it doesn't contaminate the original dataset
         dataset_copy = self._copy()
-        dataset_copy._load_args["nrows"] = nrows  # pylint: disable=protected-access
+        dataset_copy._load_args["nrows"] = nrows
         data = dataset_copy.load()
 
         return data.to_dict(orient="split")
-
-
-_DEPRECATED_CLASSES = {
-    "ExcelDataSet": ExcelDataset,
-}
-
-
-def __getattr__(name):
-    if name in _DEPRECATED_CLASSES:
-        alias = _DEPRECATED_CLASSES[name]
-        warnings.warn(
-            f"{repr(name)} has been renamed to {repr(alias.__name__)}, "
-            f"and the alias will be removed in Kedro-Datasets 2.0.0",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return alias
-    raise AttributeError(f"module {repr(__name__)} has no attribute {repr(name)}")

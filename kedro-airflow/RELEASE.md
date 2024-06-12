@@ -1,5 +1,22 @@
 # Upcoming Release
+* Sort DAGs to make sure `kedro airflow create` is deterministic.
+* Option to group MemoryDatasets in the same Airflow task (breaking change for custom template via `--jinja-file`).
+* Include the environment name in the DAG file name when different from the default.
+
+# Release 0.8.0
+* Added support for Kedro 0.19.x
+
+# Release 0.7.0
 * Added support for Python 3.11
+* Added the `--all` CLI argument to `kedro-airflow` to convert registered all pipelines at once.
+* Simplify the output of the `kedro airflow create` command.
+* Fixed compatibility of `kedro-airflow` with older versions of the config loaders (`kedro<=0.18.2`).
+* Removed support for Python 3.7
+
+## Community contributions
+Many thanks to the following Kedroids for contributing PRs to this release:
+
+* [sbrugman](https://github.com/sbrugman)
 
 # Release 0.6.0
 * Change reference to `kedro.pipeline.Pipeline` object throughout test suite with `kedro.modular_pipeline.pipeline` factory.
